@@ -3,12 +3,71 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token Radar: pre-token protocols ranked by implied value</title>
+<title>Token Radar — pre-token protocols by implied value</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<a class="skip" href="#board">Skip to the board</a>
-<main id="board" tabindex="-1" aria-busy="true"></main>
+<header class="topbar">
+  <p class="brand"><span class="dot" aria-hidden="true"></span> Token Radar</p>
+  <p class="meta" id="meta">Snapshot · DefiLlama protocol index · radar-2 model</p>
+</header>
+<main>
+  <section class="hero">
+    <div class="hero-text">
+      <h1 id="headline">Watchlist protocols, ranked by implied value</h1>
+      <p id="intro">The watchlist is the floor: every protocol with at least $50M of TVL and no token on record. The early radar adds pre-token protocols below that floor. Implied value is priced from the market itself: each category at the median market-cap-to-TVL its live-token protocols trade at. It is a model, not a promise.</p>
+    </div>
+    <dl class="stats" id="stats">
+      <div><dt>Watchlist covered</dt><dd id="stat-watchlist">–</dd></div>
+      <div><dt>Pre-token rows scored</dt><dd id="stat-board">–</dd></div>
+      <div><dt>Early rows below the floor</dt><dd id="stat-early">–</dd></div>
+      <div><dt>Live-token protocols set aside</dt><dd id="stat-live">–</dd></div>
+    </dl>
+  </section>
+
+  <section class="filters" aria-label="Filters">
+    <label class="field field-search">Search
+      <input id="search" type="search" placeholder="Search name, category or chain" autocomplete="off">
+    </label>
+    <label class="field">Category
+      <select id="category"><option value="">All categories</option></select>
+    </label>
+    <label class="field">Chain
+      <select id="chain"><option value="">All chains</option></select>
+    </label>
+    <label class="check"><input id="watchlist-only" type="checkbox"> Watchlist only</label>
+    <div class="toggle" role="group" aria-label="Token status">
+      <button id="mode-pre" type="button" aria-pressed="true">Pre-token</button>
+      <button id="mode-live" type="button" aria-pressed="false">Live token</button>
+    </div>
+    <p class="count" id="row-count"></p>
+  </section>
+  <section class="board">
+    <p class="caption" id="table-caption">Pre-token protocols, strongest implied value first. Select a row for its model and farm plan.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="num"><button id="sort-rank" type="button">Rank</button></th>
+            <th>Protocol</th>
+            <th class="num">TVL</th>
+            <th class="num">7d</th>
+            <th class="num">Age</th>
+            <th><button id="sort-value" type="button">Implied value</button></th>
+            <th>Token</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="empty" id="empty" hidden>No protocol matches these filters.</p>
+  </section>
+</main>
+<div class="scrim" id="scrim" hidden></div>
+<aside class="detail" id="detail" hidden aria-label="Protocol detail"></aside>
+<footer class="foot">
+  <p>Implied values are a model, not a price. Data: the sealed DefiLlama snapshot; the board, the detail view and the farm plans all come from the same figures.</p>
+</footer>
 <script src="../data.js"></script>
 <script src="app.js"></script>
 </body>
