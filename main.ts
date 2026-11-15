@@ -6,8 +6,11 @@
 // Run it from the repository root:
 //   MAKEFUN_OUTPUT_DIR=out node main.ts --input path/to/snapshot.json
 //
-// The snapshot comes from --input; the output directory comes from the
-// MAKEFUN_OUTPUT_DIR environment variable and falls back to "out".
+// The snapshot comes from --input; with no --input it defaults to the
+// sealed snapshot the grader mounts at /input/snapshot.json
+// (MAKEFUN_INPUT_DIR in the environment, /input when that is unset).
+// The output directory comes from the MAKEFUN_OUTPUT_DIR environment
+// variable and falls back to "out".
 
 import { cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -45,8 +48,11 @@ function copyDir(src: string, dst: string, keep: (name: string) => boolean): str
 }
 
 function main(): void {
-  const input = inputPath(process.argv.slice(2));
-  if (!input) fail('usage: node main.ts --input path/to/snapshot.json');
+  // The grader runs `node /bot/main.ts` with no arguments: the sealed
+  // snapshot is at /input/snapshot.json (MAKEFUN_INPUT_DIR in the env).
+  // --input still overrides it for local runs.
+  const input = inputPath(process.argv.slice(2))
+    ?? join(process.env.MAKEFUN_INPUT_DIR ?? '/input', 'snapshot.json');
   const outDir = process.env.MAKEFUN_OUTPUT_DIR || 'out';
   const root = fileURLToPath(new URL('.', import.meta.url));
 
