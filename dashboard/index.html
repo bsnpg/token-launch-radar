@@ -9,13 +9,13 @@
 <body>
 <header class="topbar">
   <p class="brand"><span class="dot" aria-hidden="true"></span> Token Radar</p>
-  <p class="meta" id="meta">Snapshot · DefiLlama protocol index · radar-2 model</p>
+  <p class="meta" id="meta">Snapshot · DefiLlama protocol index · radar-3 model</p>
 </header>
 <main>
   <section class="hero">
     <div class="hero-text">
       <h1 id="headline">Watchlist protocols, ranked by implied value</h1>
-      <p id="intro">The watchlist is the floor: every protocol with at least $50M of TVL and no token on record. The early radar adds pre-token protocols below that floor. Implied value is priced from the market itself: each category at the median market-cap-to-TVL its live-token protocols trade at. It is a model, not a promise.</p>
+      <p id="intro">The watchlist is the floor: every protocol with at least $50M of TVL and no token on record. The early radar adds pre-token protocols below that floor. Implied value is priced from the market itself, by a curve fitted to the traded protocols in this snapshot — not by a category guess. It is a model, not a promise.</p>
     </div>
     <dl class="stats" id="stats">
       <div><dt>Watchlist covered</dt><dd id="stat-watchlist">–</dd></div>
@@ -23,6 +23,20 @@
       <div><dt>Early rows below the floor</dt><dd id="stat-early">–</dd></div>
       <div><dt>Live-token protocols set aside</dt><dd id="stat-live">–</dd></div>
     </dl>
+  </section>
+
+  <section class="model" aria-label="Fitted model">
+    <div class="model-text">
+      <h2>The fitted model</h2>
+      <p class="formula" id="formula">log₁₀ value = α + β · log₁₀(TVL / $100M) + family + growth + age</p>
+      <p id="validation">The curve is fitted to the traded protocols in this snapshot. Out-of-sample error is measured leave-one-out, refitting on every fold.</p>
+      <p id="farm-note">Farm $/h assumes the airdrop is 10% of the implied value, shared by TVL, times a 10× activity boost for a hands-on farmer, minus gas. Farm means $15/h or more, Marginal $5–15/h, Skip below $5/h.</p>
+      <p id="recheck">Re-run in your browser: —</p>
+    </div>
+    <div class="scatter">
+      <svg id="scatter" viewBox="0 0 560 260" role="img" aria-label="Traded protocols: market cap against TVL, with the fitted curve"></svg>
+      <p class="scatter-caption" id="scatter-caption">Each dot is one traded protocol in this snapshot; the line is the fitted curve.</p>
+    </div>
   </section>
 
   <section class="filters" aria-label="Filters">
@@ -54,6 +68,8 @@
             <th class="num">7d</th>
             <th class="num">Age</th>
             <th><button id="sort-value" type="button">Implied value</button></th>
+            <th class="num">Farm $/h</th>
+            <th>Verdict</th>
             <th>Token</th>
           </tr>
         </thead>
@@ -66,7 +82,7 @@
 <div class="scrim" id="scrim" hidden></div>
 <aside class="detail" id="detail" hidden aria-label="Protocol detail"></aside>
 <footer class="foot">
-  <p>Implied values are a model, not a price. Data: the sealed DefiLlama snapshot; the board, the detail view and the farm plans all come from the same figures.</p>
+  <p>Implied values are a model, not a price. Data: the sealed DefiLlama snapshot; the board, the detail view and the farm plans all come from the same figures. The fitted curve, its out-of-sample error and the farm $/h figures are computed from the snapshot at run time.</p>
 </footer>
 <script src="../data.js"></script>
 <script src="app.js"></script>

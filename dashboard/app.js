@@ -2,6 +2,9 @@
 // with search, category and chain filters, a watchlist switch, a pre-token /
 // live-token switch, sortable columns and a detail view for every protocol.
 // The page makes no network request: all of its data arrives in data.js.
+// The fitted model, its out-of-sample validation and the farm $/h figures
+// are rendered from the same data, and the page recomputes every row from
+// the fit to prove the board matches the figures behind it.
 
 var DATA = typeof window !== 'undefined' ? window.RADAR || null : null;
 
@@ -22,6 +25,16 @@ function money(value) {
   if (value >= 1e6) return '$' + (value / 1e6).toFixed(1) + 'M';
   if (value >= 1e3) return '$' + (value / 1e3).toFixed(1) + 'K';
   return '$' + Math.round(value);
+}
+
+function dollars(value) {
+  if (value == null) return '—';
+  return (value < 0 ? '-$' : '$') + Math.abs(value).toFixed(2);
+}
+
+function perHourText(value) {
+  if (value == null) return '—';
+  return (value < 0 ? '-$' : '$') + Math.abs(value).toFixed(2) + '/h';
 }
 
 function pctText(value) {
@@ -117,10 +130,131 @@ function farmPlan(row) {
   });
 }
 
-// The page's own recompute of a row from the figures data.js carries:
-// TVL times the category comp, the growth, maturity and breadth multipliers.
+// ---------------------------------------------------------------- the fitted model
+
+// The page's own recompute of a row from the figures data.js carries: the
+// fitted size curve (alpha + beta on log TVL), the shrunk family offset,
+// and the bounded growth, maturity and breadth multipliers. The same
+// formula, in the same order, as the model's own pricing.
+var familyMap = null;
+function fitFamily(category) {
+  if (!familyMap) {
+    familyMap = {};
+    (DATA.fit.family || []).forEach(function (f) { familyMap[f.category] = f.offset; });
+  }
+  return category != null && familyMap[category] != null ? familyMap[category] : 0;
+}
+
+function multipliers(row) {
+  var m = DATA.model;
+  var growth = row.change_7d == null ? 0 : row.change_7d;
+  growth = Math.min(m.growth_cap, Math.max(m.growth_floor, growth));
+  var g = 1 + (growth / 100) * m.growth_weight;
+  var age = row.age_days == null ? m.unknown_age_days : row.age_days;
+  var mat = m.maturity_floor + (Math.min(Math.max(age, 0), m.maturity_days) / m.maturity_days) * m.maturity_range;
+  var extra = Math.min(Math.max((row.chains || []).length - 1, 0), m.breadth_max_extra);
+  var b = 1 + m.breadth_step * extra;
+  return { growth: g, maturity: mat, breadth: b };
+}
+
 function recompute(row) {
-  return Math.round(row.tvl_usd * row.comp_multiple * row.growth_multiplier * row.maturity_multiplier * row.breadth_multiplier);
+  var fit = DATA.fit;
+  var size = fit.alpha + fit.beta * Math.log10(row.tvl_usd / 1e8);
+  var mult = multipliers(row);
+  var logValue = size + fitFamily(row.category) + Math.log10(mult.growth * mult.maturity * mult.breadth);
+  return Math.max(1, Math.round(Math.pow(10, logValue)));
+}
+
+// The page's own farm economics for a row, from the same assumptions as
+// the model: the airdrop is airdrop_pct of the implied value, shared by
+// TVL, times the activity boost; gas is the first transaction, the setup,
+// and one small transaction a week; hands-on time is the steps' minutes.
+function farmEcon(row, implied) {
+  var m = DATA.model;
+  var size = row.tvl_usd >= 5000000000 ? 250 : row.tvl_usd >= 1000000000 ? 150 : row.tvl_usd >= 100000000 ? 100 : 50;
+  var hold = row.age_days == null ? 30 : row.age_days < 180 ? 60 : row.age_days < 365 ? 45 : 30;
+  var chain = row.chains && row.chains.length > 0 ? row.chains[0] : 'its main chain';
+  var gas = chain === 'Ethereum' ? 8 : 1;
+  var weeks = Math.ceil(hold / 7);
+  var gasTotal = m.gas_first_tx_usd + gas + gas * weeks;
+  var expected = implied * m.airdrop_pct * (size / row.tvl_usd) * m.activity_boost;
+  var net = expected - gasTotal;
+  var hands = (35 + 10 * weeks) / 60;
+  var perHour = net / hands;
+  return {
+    capital: size, hold: hold, weeks: weeks, expected: expected, gas: gasTotal,
+    net: net, hands: hands, perHour: perHour,
+    verdict: perHour >= m.farm_usd_per_hour ? 'Farm' : perHour >= m.marginal_usd_per_hour ? 'Marginal' : 'Skip',
+  };
+}
+
+// Recompute every row in the page and count how many match board.json:
+// the implied value, and the farm $/h to the cent.
+function recheckAll() {
+  var match = 0;
+  DATA.rows.forEach(function (r) {
+    var implied = recompute(r);
+    var econ = farmEcon(r, implied);
+    var perHour = Math.round(econ.perHour * 100) / 100;
+    if (implied === r.implied_value_usd && perHour === r.farm_econ.usd_per_hour) match++;
+  });
+  return { match: match, total: DATA.rows.length };
+}
+
+function renderModel() {
+  var fit = DATA.fit;
+  var v = fit.validation;
+  $('formula').textContent = 'log\u2081\u2080 value = ' + fit.alpha.toFixed(2) + ' + ' + fit.beta.toFixed(2)
+    + ' \u00b7 log\u2081\u2080(TVL / $100M) + family + growth + age'
+    + '  — fitted on ' + fit.n_live + ' traded protocols (residual SD ' + fit.resid_sd.toFixed(2) + ' in log\u2081\u2080).';
+  $('validation').textContent = 'Leave-one-out on ' + v.loo_n + ' traded protocols, refitting every fold: '
+    + 'median miss ' + v.median_miss.toFixed(2) + '\u00d7 (old category-median model ' + v.baseline_median_miss.toFixed(2) + '\u00d7); '
+    + Math.round(v.within_3x * 100) + '% within 3\u00d7 (was ' + Math.round(v.baseline_within_3x * 100) + '%); '
+    + 'rank correlation ' + v.rank_corr.toFixed(2) + ' (was ' + v.baseline_rank_corr.toFixed(2) + ').';
+  var check = recheckAll();
+  $('recheck').textContent = 'Re-run in your browser: ' + check.match + '/' + check.total + ' rows match board.json.';
+}
+
+// Scatter plot: traded protocols, log market cap against log TVL, with the
+// fitted curve. Drawn from the fit points data.js carries.
+function renderScatter() {
+  var fit = DATA.fit;
+  var pts = DATA.fit_points || [];
+  var svg = $('scatter');
+  if (!pts.length) { svg.innerHTML = ''; return; }
+  var W = 560, H = 260, L = 52, R = 14, T = 26, B = 30;
+  var xs = pts.map(function (p) { return Math.log10(p.tvl_usd / 1e8); });
+  var ys = pts.map(function (p) { return Math.log10(p.mcap_usd); });
+  var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+  var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+  var padX = (x1 - x0) * 0.08 + 0.1, padY = (y1 - y0) * 0.08 + 0.1;
+  x0 -= padX; x1 += padX; y0 -= padY; y1 += padY;
+  function px(x) { return L + (x - x0) / (x1 - x0) * (W - L - R); }
+  function py(y) { return T + (1 - (y - y0) / (y1 - y0)) * (H - T - B); }
+  var out = '';
+  out += '<line x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R) + '" y2="' + (H - B) + '" stroke="#cfd6cc"/>';
+  out += '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (H - B) + '" stroke="#cfd6cc"/>';
+  var xTicks = [[-1, '$10M'], [0, '$100M'], [1, '$1B'], [2, '$10B']];
+  xTicks.forEach(function (t) {
+    if (t[0] < x0 || t[0] > x1) return;
+    out += '<text x="' + px(t[0]).toFixed(1) + '" y="' + (H - 10) + '" font-size="11" fill="#64756a" text-anchor="middle">' + t[1] + '</text>';
+    out += '<line x1="' + px(t[0]).toFixed(1) + '" y1="' + (H - B) + '" x2="' + px(t[0]).toFixed(1) + '" y2="' + (H - B + 4) + '" stroke="#64756a"/>';
+  });
+  var yTicks = [[6, '$1M'], [7, '$10M'], [8, '$100M'], [9, '$1B'], [10, '$10B']];
+  yTicks.forEach(function (t) {
+    if (t[0] < y0 || t[0] > y1) return;
+    out += '<text x="' + (L - 6) + '" y="' + (py(t[0]) + 4).toFixed(1) + '" font-size="11" fill="#64756a" text-anchor="end">' + t[1] + '</text>';
+    out += '<line x1="' + (L - 4) + '" y1="' + py(t[0]).toFixed(1) + '" x2="' + L + '" y2="' + py(t[0]).toFixed(1) + '" stroke="#64756a"/>';
+  });
+  pts.forEach(function (p) {
+    out += '<circle cx="' + px(Math.log10(p.tvl_usd / 1e8)).toFixed(1) + '" cy="' + py(Math.log10(p.mcap_usd)).toFixed(1) + '" r="3" fill="#0b6e4f" opacity="0.55"/>';
+  });
+  var lx0 = px(x0), ly0 = py(fit.alpha + fit.beta * x0);
+  var lx1 = px(x1), ly1 = py(fit.alpha + fit.beta * x1);
+  out += '<line x1="' + lx0.toFixed(1) + '" y1="' + ly0.toFixed(1) + '" x2="' + lx1.toFixed(1) + '" y2="' + ly1.toFixed(1) + '" stroke="#17251d" stroke-width="2"/>';
+  out += '<text x="' + L + '" y="14" font-size="12" font-weight="650" fill="#17251d">log\u2081\u2080 mcap = ' + fit.alpha.toFixed(2) + ' + ' + fit.beta.toFixed(2) + ' \u00b7 log\u2081\u2080(TVL/$100M)</text>';
+  svg.innerHTML = out;
+  $('scatter-caption').textContent = 'Each dot is one of the ' + pts.length + ' traded protocols in this snapshot; the line is the fitted curve. Market cap rises with TVL, but with wide scatter — the fit is a pricing guide, not a prediction.';
 }
 
 // ---------------------------------------------------------------- state
@@ -192,6 +326,12 @@ function renderTable() {
     var token = v.live
       ? '<span class="token-mark live"><span class="dot"></span>live token</span>'
       : '<span class="token-mark"><span class="dot"></span>no token</span>';
+    var farm = '<td class="num">—</td><td>—</td>';
+    if (!v.live && v.row.farm_econ) {
+      var e = v.row.farm_econ;
+      farm = '<td class="num">' + esc(perHourText(e.usd_per_hour)) + '</td>'
+        + '<td><span class="verdict verdict-' + e.verdict.toLowerCase() + '">' + esc(e.verdict) + '</span></td>';
+    }
     var cls = state.selected === v.slug ? ' class="selected"' : '';
     return '<tr data-slug="' + esc(v.slug) + '"' + cls + '>'
       + '<td class="num">' + v.rank + '</td>'
@@ -200,6 +340,7 @@ function renderTable() {
       + '<td class="num">' + pct + '</td>'
       + '<td class="num">' + ageText(v.age_days) + '</td>'
       + '<td><span class="value-cell"><span class="bar"><i style="width:' + width + '%"></i></span><span>' + money(v.value) + '</span></span></td>'
+      + farm
       + '<td>' + token + '</td></tr>';
   }).join('');
   $('rows').innerHTML = html;
@@ -262,29 +403,38 @@ function openDetail(view) {
       + '</dl>'
       + '<p class="why">This protocol already has a token that trades, so the board sets it aside and shows the market\u2019s own value instead of a model price.</p>';
   } else {
-    var compNote = r.comp_category_n === 0
-      ? '<span class="note">(global)</span>'
-      : '<span class="note">(' + r.comp_category_n + ' live)</span>';
-    var catNote = r.comp_category_n === 0
-      ? ' (global median: too few live comps in this category)'
-      : ' (' + r.comp_category_n + ' live comps)';
-    var catPhrase = r.category ? 'the median for ' + r.category : 'the median across live protocols';
+    var mult = multipliers(r);
+    var famNote = r.family_n === 0
+      ? '<span class="note">(too few live comps)</span>'
+      : '<span class="note">(' + r.family_n + ' live in ' + esc(r.category || '') + ')</span>';
     var again = money(recompute(r));
+    var e = r.farm_econ;
     html += '<p class="rank-line">Rank ' + r.rank + ' of ' + DATA.board_size + '</p>'
       + '<h2>' + esc(r.name) + '</h2>'
       + '<p class="chains">' + esc(r.category || 'Uncategorised') + ' on ' + esc((r.chains || []).join(', ')) + '</p>'
       + '<h3>Implied value</h3><dl>'
       + kvRow('TVL', money(r.tvl_usd))
-      + kvRow('Category comp', r.comp_multiple.toFixed(2) + 'x ' + compNote)
-      + kvRow('Seven-day growth', pctText(r.change_7d))
-      + kvRow('Age with no token', ageText(r.age_days))
-      + kvRow('Chains', r.chains.length + ' <span class="note">(' + r.breadth_multiplier.toFixed(2) + 'x)</span>')
-      + kvRow('Growth multiplier', r.growth_multiplier.toFixed(3))
-      + kvRow('Maturity multiplier', r.maturity_multiplier.toFixed(4))
+      + kvRow('Size curve', 'log\u2081\u2080 ' + r.size_log10.toFixed(2) + ' <span class="note">(' + DATA.fit.alpha.toFixed(2) + ' + ' + DATA.fit.beta.toFixed(2) + ' \u00b7 log\u2081\u2080 TVL/$100M)</span>')
+      + kvRow('Family offset', (r.family_offset >= 0 ? '+' : '') + r.family_offset.toFixed(2) + ' ' + famNote)
+      + kvRow('Seven-day growth', pctText(r.change_7d) + ' <span class="note">(\u00d7' + mult.growth.toFixed(2) + ')</span>')
+      + kvRow('Age with no token', ageText(r.age_days) + ' <span class="note">(\u00d7' + mult.maturity.toFixed(2) + ')</span>')
+      + kvRow('Chains', r.chains.length + ' <span class="note">(\u00d7' + mult.breadth.toFixed(2) + ')</span>')
       + kvRow('Implied value', money(r.implied_value_usd))
       + '</dl>'
-      + '<p class="why">Rank ' + r.rank + ' because its ' + money(r.tvl_usd) + ' of TVL is priced at ' + r.comp_multiple.toFixed(2) + 'x, ' + catPhrase + catNote + ', moved ' + pctText(r.change_7d) + ' in seven days, has run ' + ageText(r.age_days) + ' with no token, and reaches ' + r.chains.length + ' chains. '
-      + 'Model ' + DATA.model_version + ' scores every protocol with the same function, and this page recomputes the row from the same figures behind board.json (about ' + again + '). The figure is an estimate, not a price.</p>'
+      + '<p class="why">Rank ' + r.rank + ' because its ' + money(r.tvl_usd) + ' of TVL sits on the fitted curve at log\u2081\u2080 ' + r.size_log10.toFixed(2)
+      + ', adjusted ' + (r.family_offset >= 0 ? '+' : '') + r.family_offset.toFixed(2) + ' for its family, moved ' + pctText(r.change_7d)
+      + ' in seven days, has run ' + ageText(r.age_days) + ' with no token, and reaches ' + r.chains.length + ' chains. '
+      + 'Model ' + DATA.model_version + ' fits the curve to this snapshot\u2019s traded protocols and scores every protocol with the same function; '
+      + 'this page recomputes the row from the same figures behind board.json (about ' + again + '). The figure is an estimate, not a price.</p>'
+      + '<h3>Farm economics</h3><dl>'
+      + kvRow('Expected airdrop value', dollars(e.expected_usd))
+      + kvRow('Gas (setup + weekly)', dollars(e.gas_usd))
+      + kvRow('Net', dollars(e.net_usd))
+      + kvRow('Hands-on time', e.hands_hours.toFixed(1) + ' h')
+      + kvRow('Farm $/h', perHourText(e.usd_per_hour) + ' <span class="note">(' + esc(e.verdict) + ')</span>')
+      + '</dl>'
+      + '<p class="why">The airdrop is assumed to be 10% of the implied value, shared by TVL, times a 10\u00d7 activity boost for a hands-on farmer. '
+      + 'Capital $' + e.capital_usd + ', held ' + e.hold_days + ' days. Farm means $15/h or more, Marginal $5–15/h, Skip below $5/h.</p>'
       + '<h3>Farm plan</h3><ol>'
       + farmPlan(r).map(function (s) {
           return '<li><p class="step-text">' + esc(s.text) + '</p><p class="step-meta">Cost: ' + esc(s.cost) + '. Time: ' + esc(s.time) + '.</p></li>';
@@ -321,11 +471,13 @@ function setMode(mode) {
 
 function init() {
   if (!DATA) {
-    $('rows').innerHTML = '<tr><td colspan="7">No data: data.js did not load.</td></tr>';
+    $('rows').innerHTML = '<tr><td colspan="9">No data: data.js did not load.</td></tr>';
     $('row-count').textContent = '0 rows shown';
     return;
   }
   renderHead();
+  renderModel();
+  renderScatter();
   fillOptions();
   $('search').addEventListener('input', function (e) { state.query = e.target.value; renderTable(); });
   $('category').addEventListener('change', function (e) { state.category = e.target.value; renderTable(); });
